@@ -395,11 +395,12 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
       
     offset = 0
 
-    debug("\n%-19s  %-47s  %d bytes" % (
+    print("\n%-19s  %-47s  %d bytes" % (
             DATETIME_STRING(),
             TCPThread.getSocketInfo(sock,
                     NETWORK_DIR_LABELS.get(action, " ")),
-            len(data)))
+            len(data)),
+            file = sys.stderr)
 
     while (len(data) > 0):
       endIdx = (15 if(len(data) >= 16) else len(data))
@@ -415,17 +416,18 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
           strAsc += chr(ord(line[bi]))
         else:
           strAsc += "."
-      debug("%-04s   %-48s   %s" % (
-            ("{:04x}".format(offset)),
-            strHex,
-            strAsc))
+      print("%-04s   %-48s   %s" % (
+                ("{:04x}".format(offset)),
+                strHex,
+                strAsc),
+            file = sys.stderr)
       if(endIdx < 15):
         break
       else:
         data = data[16:]
       offset += len(line)
     
-    debug("")
+    print("", file = sys.stderr)
   
   #----------------------------------------------------------------------------
   
@@ -518,12 +520,13 @@ NOTES / **DISCLAIMER**:
 
 #------------------------------------------------------------------------------
 
-def debug(msg, file = sys.stderr):
+def debug(msg, file = sys.stderr, extraLineFeed = True):
 
   if(g_debug):
-    print("%s [DEBUG] %s\n" % (
+    print("%s [DEBUG] %s%s" % (
                 DATETIME_STRING(),
-                msg),
+                msg,
+                ("\n" if(extraLineFeed) else "")),
             file = file)
 
 #------------------------------------------------------------------------------
@@ -621,7 +624,8 @@ def sendExploitedRequest(
         exploitCBIP         = None,
         exploitCBPort       = 1389,
         exploitCBUserData   = None,
-        useProxy            = False):
+        useProxy            = False,
+        requestTimeout      = 8.0):
 
   try:
     urllib3.disable_warnings()
@@ -654,7 +658,8 @@ def sendExploitedRequest(
             ("%s://%s" % (proto, url)),
             verify      = False,
             headers     = headers,
-            proxies     = proxies)
+            proxies     = proxies,
+            timeout     = requestTimeout)
       ret["succeeded"]  = True
       ret["status"]     = response.status_code
       break
@@ -672,7 +677,7 @@ def isSystemProxyEnabled():
   
   try:
     proxies = urllib.request.getproxies()
-    if((proxies != {}) or (proxies != PROXY_NONE)):
+    if((proxies != {}) and (proxies != PROXY_NONE)):
       ret = True
     else:
       ret = False
@@ -698,6 +703,7 @@ def main():
   cbOk              = None
   cbTestSkipped     = False
   proxyEnabled      = False
+  exploitSucceeded  = False
 
   ## Option Initialization
   exploitOnly       = False
