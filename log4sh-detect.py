@@ -35,6 +35,13 @@
 from    pprint                      import      (pprint, pformat)
 from    datetime                    import      (datetime)
 from    threading                   import      (Thread, Event)
+try:
+  from threading import Queue
+except:
+  try:
+    from queue import Queue
+  except:
+    pass
 import  getopt
 import  os
 import  random
@@ -56,8 +63,8 @@ _                       = [
 ]
 #------------------------------------------------------------------------------
 PROGRAM                 = os.path.basename(sys.argv[0])
-VERSION                 = "1.3"
-REVISION                = "20211215-0"
+VERSION                 = "1.4"
+REVISION                = "20211216-1"
 AUTHOR                  = "Morty (Morty's Creations)"
 #------------------------------------------------------------------------------
 # GLOBALS / CONSTANTS
@@ -110,7 +117,7 @@ g_tcpThread             = None
 class TCPThread(Thread):
 
   #----------------------------------------------------------------------------
-
+  
   def __init__(
         self,
         addr            = None,
@@ -134,12 +141,14 @@ class TCPThread(Thread):
     self._result        = False
     
     self._clients       = {}
+    
+    self._qLog          = Queue()
 
   #----------------------------------------------------------------------------
   
   def begin(self):
   
-    debug("TCPThread: begin()")
+    self._debug("TCPThread: begin()")
     
     ret = None
     
@@ -162,7 +171,7 @@ class TCPThread(Thread):
   #----------------------------------------------------------------------------
   
   @staticmethod
-  def socketShutdown(sock):
+  def socketShutdown(sock, qLog:Queue):
   
     ret = False
     
@@ -173,19 +182,16 @@ class TCPThread(Thread):
       sock.setsockopt(socket.SOL_SOCKET,
             socket.SO_LINGER,
             struct.pack('ii', 1, 0))
-      debug("TCPThread::socketClose [socket = %s]: socket.shutdown()..." %
-            (addr))
       sock.shutdown(socket.SHUT_RDWR)
-      debug("TCPThread::socketClose [socket = %s]: socket.close()..." %
-            (addr))
       sock.close()
       ret = True
     except Exception as e:
-      debug("TCPThread::socketClose - EXCEPTION [socket = %s]: %s" %
+      qLog.put("TCPThread::socketClose - EXCEPTION [socket = %s]: %s" %
             (addr, str(e)))
       if(WANT_EXCEPTIONS): raise
 
-    debug("TCPThread::socketClose [socket = %s]: cleanup Complete: %s" %
+    if(g_debug):
+      qLog.put("TCPThread::socketClose [socket = %s]: cleanup Complete: %s" %
             (addr, str(ret)))
 
     return(ret)  
@@ -194,7 +200,7 @@ class TCPThread(Thread):
     
   def cancel(self):
   
-    debug("TCPThread::cancel BEGIN")
+    self._debug("TCPThread::cancel BEGIN")
     
     if(self._evtTerm is not None):
       self._evtTerm.set()
@@ -216,7 +222,7 @@ class TCPThread(Thread):
     # neater code, but my goal was to encapsulate this into a SINGLE SCRIPT,
     # so leaving it as-is for now!
     
-    debug("TCPThread::run() BEGIN")
+    self._debug("TCPThread::run() BEGIN")
 
     sockList    = [self._socket]
     
@@ -224,12 +230,12 @@ class TCPThread(Thread):
     
     while (not self._evtTerm.is_set()):
     
-      # debug("About to Wait for Socket select()...")
+      # self._debug("About to Wait for Socket select()...")
       (rr, rw, err) = select.select(sockList,
             sockList,
             sockList,
             TIMEOUT_SOCKET_SELECT)
-      # debug("Socket select() Complete:\n  rr  = %d\n  rw  = %d\n  err = %d" %
+      # self._debug("Socket select() Complete:\n  rr  = %d\n  rw  = %d\n  err = %d" %
       #      (len(rr), len(rw), len(err)))
       for rs in rr:
         # READABLE SOCKETS:
@@ -241,7 +247,7 @@ class TCPThread(Thread):
             "addr"      : ("%s:%d" % (addr[0], addr[1])),
             "conn"      : conn,
           }
-          debug("Received Connection on Port %d from %s:%d%s" % (
+          self._debug("Received Connection on Port %d from %s:%d%s" % (
                 self._port,
                 addr[0],
                 addr[1],
@@ -258,18 +264,19 @@ class TCPThread(Thread):
             data        = rs.recv(1024)
             dataAscii   = TCPThread.decodeToAscii(data)
             if(data):
-              TCPThread.hexdump(data, rs, "Receive")
+              if(g_debug):
+                TCPThread.hexdump(data, rs, self._qLog, "Receive")
               if(client["state"] == "init"):
                 client["state"] = "ldap_bind_request_received"
               elif(client["state"] == "ldap_bind_success_sent"):
                 if(self._searchString is not None):
                   if(self._searchString in dataAscii):
                     self._result = True
-                    debug("TCPThread/run(): Search String Found: %s" %
+                    self._debug("TCPThread/run(): Search String Found: %s" %
                             (self._searchString))
                     break
             else:
-              debug("Connection Closed: %s" % (client["addr"]))
+              self._debug("Connection Closed: %s" % (client["addr"]))
               sockList.remove(rs)
 
       for ws in rw:
@@ -278,7 +285,7 @@ class TCPThread(Thread):
         if(client is not None):
           if(client["state"] == "ldap_bind_request_received"):
             ws.send(LDAP_BIND_SUCCESS)
-            debug("Sent LDAP Bind Success to Client: %s" % (client["addr"]))
+            self._debug("Sent LDAP Bind Success to Client: %s" % (client["addr"]))
             client["state"] = "ldap_bind_success_sent"
           elif(client["state"] == "ldap_bind_success_sent"):
             pass
@@ -287,26 +294,26 @@ class TCPThread(Thread):
         # ERROR SOCKET
         client = self._clients.get(es, None)
         if(client is not None):
-          debug("Socket Error: %s" % (client["addr"]))
+          self._debug("Socket Error: %s" % (client["addr"]))
           es.close()
           del self._clients[es]
           sockList.remove(es)
       
       if(self._result):
-        debug("TCPThread.run(): Search String Found; Exiting Thread...")
+        self._debug("TCPThread.run(): Search String Found; Exiting Thread...")
         break
       elif(((time.time() * 1000) - msStart) >= self._timeout):
-        debug("TCPThread.run(): Timeout Reached [%d]; Exiting Thread..." %
+        self._debug("TCPThread.run(): Timeout Reached [%d]; Exiting Thread..." %
                 (self._timeout))
         break  
 
     sockList.reverse()
     for sock in sockList:
       if(sock is not None):
-        TCPThread.socketShutdown(sock)
+        TCPThread.socketShutdown(sock, self._qLog)
         sockList.remove(sock)
 
-    debug("TCPThread::run() COMPLETE")          
+    self._debug("TCPThread::run() COMPLETE")          
       
 
   #----------------------------------------------------------------------------
@@ -320,7 +327,7 @@ class TCPThread(Thread):
         for port in range(10000, 32767):
           try:
             self._socket.bind((self._addr, port))
-            debug("Socket Bound to %s:%d..." % (self._addr, port))
+            self._debug("Socket Bound to %s:%d..." % (self._addr, port))
             ret = port
             break
           except:
@@ -328,13 +335,34 @@ class TCPThread(Thread):
       else:
         try:
           self._socket.bind((self._addr, port))
-          debug("Socket Bound to %s:%d..." % (self._addr, port))
+          self._debug("Socket Bound to %s:%d..." % (self._addr, port))
           ret = port
         except:
           if(WANT_EXCEPTIONS): raise
     
     return(ret)
     
+  #----------------------------------------------------------------------------
+  
+  def _debug(self, msg, rawLine = False):
+
+    if(g_debug):
+      if(rawLine):
+        self._qLog.put("%s" % (msg))
+      else:
+        self._qLog.put("%s [DEBUG] %s" % (
+                DATETIME_STRING(),
+                    msg))
+
+  #----------------------------------------------------------------------------
+  
+  def flushDebugQueue(self, file = sys.stderr):
+  
+    while(self._qLog.qsize() > 0):
+      line = self._qLog.get()
+      self._qLog.task_done()
+      print(line, file = file)
+  
   #----------------------------------------------------------------------------
   
   @staticmethod
@@ -371,7 +399,7 @@ class TCPThread(Thread):
   #----------------------------------------------------------------------------
 
   @staticmethod
-  def hexdump(dataIn, sock:socket, action = "Receive"):
+  def hexdump(dataIn, sock:socket, qLog:Queue, action = "Receive"):
 
     data = None
     
@@ -395,12 +423,11 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
       
     offset = 0
 
-    print("\n%-19s  %-47s  %d bytes" % (
+    qLog.put("\n%-19s  %-47s  %d bytes" % (
             DATETIME_STRING(),
             TCPThread.getSocketInfo(sock,
                     NETWORK_DIR_LABELS.get(action, " ")),
-            len(data)),
-            file = sys.stderr)
+            len(data)))
 
     while (len(data) > 0):
       endIdx = (15 if(len(data) >= 16) else len(data))
@@ -416,11 +443,10 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
           strAsc += chr(ord(line[bi]))
         else:
           strAsc += "."
-      print("%-04s   %-48s   %s" % (
+      qLog.put("%-04s   %-48s   %s" % (
                 ("{:04x}".format(offset)),
                 strHex,
-                strAsc),
-            file = sys.stderr)
+                strAsc))
       if(endIdx < 15):
         break
       else:
@@ -447,6 +473,28 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
     return(ret)
   
   #----------------------------------------------------------------------------
+  
+  @staticmethod
+  def waitForThread(t, cancel = False):
+  
+    ret     = None
+    
+    joined  = False
+    
+    if(cancel):  t.cancel()
+    
+    while not joined:
+      try:
+        t.join(500)
+        if(not(t.is_alive())):
+          joined  = True
+          ret     = t.getResult()
+        t.flushDebugQueue()
+      except:
+        pass
+  
+    return(ret)    
+  
   #----------------------------------------------------------------------------
   #----------------------------------------------------------------------------
   
@@ -654,7 +702,9 @@ def sendExploitedRequest(
 
   for proto in protos:
     try:
-      response = requests.get(
+      session           = requests.Session()
+      session.trust_env = useProxy
+      response = session.get(
             ("%s://%s" % (proto, url)),
             verify      = False,
             headers     = headers,
@@ -798,13 +848,15 @@ def main():
             searchString    = exploitCBUserData,
             port            = exploitCBPort)
       exploitCBPort = g_tcpThread.begin()
+      g_tcpThread.flushDebugQueue()
       if(exploitCBPort is None):
         errorexit("Failed to bind local listener port; Fatal Error...")
       printStatus(
             "Local Callback Listener Opened",
             port            = str(exploitCBPort))
-    except:
-      errorexit("Failed to start TCP Thread; Exiting...")
+    except Exception as e:
+      errorexit("Failed to start TCP Thread: %s; Exiting..." %
+            (str(e)))
   
   if(not(useProxy)):
     proxyEnabled = isSystemProxyEnabled()
@@ -822,14 +874,15 @@ def main():
             exploitCBPort   = exploitCBPort,
             status          = ("SUCCEEDED" if(cbOk) else "FAILED"))
       if(not(cbOk)):
-        g_tcpThread.cancel()
-        g_tcpThread.join()
+        TCPThread.waitForThread(g_tcpThread,  cancel = True)
         errorexit("Callback IP / Port Reachability Test FAILED; " +
                 "Fatal Error...")
 
   ## Test Validation        END     ------------------------------------------
   ## Exploit Test           BEGIN   ------------------------------------------
 
+  if(g_tcpThread is not None):  g_tcpThread.flushDebugQueue()
+  
   printStatus(
         "Sending Exploit HTTP Request",
         url                 = url)
@@ -842,13 +895,16 @@ def main():
         exploitCBUserData   = exploitCBUserData,
         useProxy            = useProxy)
 
+  if(g_tcpThread is not None):  g_tcpThread.flushDebugQueue()
+
   printStatus(
         "Exploit HTTP Request Sent",
         url                 = url,
         succeeded           = str(reqStatus["succeeded"]),
         http_status         = str(reqStatus["status"]))
   
-  if(reqStatus.get("succeeded", False)):
+  if((reqStatus.get("succeeded", False)) or
+        (reqStatus.get("status", -1) > -1)):
   
     if(not(exploitOnly)):
       printStatus(
@@ -857,8 +913,7 @@ def main():
             callbackPort    = exploitCBPort,
             callbackTimeout = exploitCBTimeout)
       try:
-        g_tcpThread.join()
-        exploitSucceeded = g_tcpThread.getResult()
+        exploitSucceeded = TCPThread.waitForThread(g_tcpThread)
         retval           = (RETVAL_VULNERABLE if(exploitSucceeded)
                 else RETVAL_NOT_VULNERABLE)
       except InterruptedError:
@@ -872,6 +927,12 @@ def main():
         print("%-40s [%s]" % (
                 url,
                 "NO_RESULT_USER_CANCELLED"))
+  else:
+    if(g_tcpThread):
+      TCPThread.waitForThread(g_tcpThread, cancel = True)
+    print("%-40s [%s]" % (
+            url,
+            "TEST_FAILED"))
 
   if(not(disableWarnings) and not(exploitSucceeded)):
     if(cbTestSkipped):  exploitCBTestWarning()
