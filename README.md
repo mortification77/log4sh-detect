@@ -16,9 +16,39 @@ You MAY need to install any missing Python Modules -- MOST are STANDARD, but som
 pip install requests
 ```
 
+## Operation
+
+The scipt does the following:
+
+1) HTTP Test:
+
+* Send the SAME HTTP Request to the target WITHOUT the exploit to validate that connectivity to the host exists. [CAN BE DISABLED, but HIGHLY RECOMMENDED NOT TO!]
+
+* If this test fails to send, the script stops here with TEST_FAILED.
+
+2. Begin a Raw TCP Listener Thread to listen for LDAP Requests (a Callback) from the host being tested.
+
+* The script ONLY responds back to an initial "LDAP Bind Request" with "LDAP Bind Success", causing the next request from a vulnerable server to send the "Random User Data String" back to us.
+
+
+3. Test the "Callback Path":
+
+* Connects to itself via the specified "Callback IP" as a public NAT can be used to test hosts behind a router / firewall. [CAN BE DISABLED, but HIGHLY RECOMMENDED NOT TO!]
+
+4. Send the Exploit Request:
+
+* If this request fails to send *AND* the HTTP Test from #1 SUCCEEDS (and was NOT DISABLED), the script stops here, indicating that the host being tested is PATCHED.
+
+* If this request fails to send *AND* the HTTP Test was NOT ENABLED, it stops here, indicating TEST_FAILED.
+
+5. Wait for 10 seconds for a response from a vulnerable host.
+
+* If a request is received, the host is VULNERABLE, otherwise not_vulnerable.
+
+
 ## Usage
 ```
-Usage: log4sh-detect.py [-erT] [-i|p|h|t <arg>] <url>
+Usage: log4sh-detect.py [-erTWx] [--skip-http-test] [-i|p|h|t <arg>] <url>
 
 OPTIONS:
 
@@ -32,6 +62,10 @@ OPTIONS:
   -H | --header         <hdr_name>  header name sent in exploit
   -t | --timeout        <timeout>   timeout for exploit in seconds
   -T | --skip-callback-test         skip reachability test [NOT RECOMMENDED!]
+  -x | --use-system-proxy           send exploit request via Proxy
+  -W | --disable-warnings           disable warnings [NOT RECOMMENDED!]
+       --skip-http-test             skip http test [NOT RECOMMENDED!]
+
 ```
 
 ## Examples

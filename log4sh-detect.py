@@ -63,8 +63,8 @@ _                       = [
 ]
 #------------------------------------------------------------------------------
 PROGRAM                 = os.path.basename(sys.argv[0])
-VERSION                 = "1.4"
-REVISION                = "20211216-1"
+VERSION                 = "1.5"
+REVISION                = "20211218-1"
 AUTHOR                  = "Morty (Morty's Creations)"
 #------------------------------------------------------------------------------
 # GLOBALS / CONSTANTS
@@ -74,6 +74,7 @@ RETVAL_NOT_VULNERABLE   = 0
 RETVAL_VULNERABLE       = 1
 RETVAL_NO_TEST          = 2
 RETVAL_TEST_FAILED      = 3
+RETVAL_PATCHED          = 4
 #------------------------------------------------------------------------------
 NETWORK_DIR_LABELS      = {
   "Receive"             : " <-- ",
@@ -557,6 +558,7 @@ NOTES / **DISCLAIMER**:
       1         SUCCEEDED           YES
       2         NOT PERFORMED       N/A             [Script Usage Only]
       3         FAILED              N/A
+      4         SUCCEEDED           NO (PATCHED)    [NEW v1.5]
 
   * Morty and Morty's Creations ASSUMES ZERO LIABILITY relating to the
     results obtained by this script.
@@ -764,6 +766,7 @@ def main():
   cbTestSkipped     = False
   proxyEnabled      = False
   exploitSucceeded  = False
+  httpTestSucceeded = False
 
   ## Option Initialization
   exploitOnly       = False
@@ -874,6 +877,8 @@ def main():
     if((not(reqStatus.get("succeeded", False))) or
             (reqStatus.get("status", -1) < 0)):
       errorexit("Failed to Send Test HTTP Request (RESULTS WILL BE INVALID); Exiting!")
+    else:
+      httpTestSucceeded = True
 
   if(exploitCBUserData is None):
     exploitCBUserData = ("".join(random.choice(string.ascii_lowercase)
@@ -939,8 +944,8 @@ def main():
         succeeded           = str(reqStatus["succeeded"]),
         http_status         = str(reqStatus["status"]),
         error               = reqStatus["error"])
-  
-  if((reqStatus.get("succeeded", False)) or
+
+  if((reqStatus.get("succeeded", False)) and
         (reqStatus.get("status", -1) > -1)):
   
     if(not(exploitOnly)):
@@ -967,7 +972,14 @@ def main():
   else:
     if(g_tcpThread):
       TCPThread.waitForThread(g_tcpThread, cancel = True)
-    print("%-40s [%s]" % (
+    if(httpTestSucceeded):
+      exploitSucceeded  = False
+      retval            = RETVAL_PATCHED
+      print("%-40s [%s]" % (
+            url,
+            "PATCHED"))
+    else:
+      print("%-40s [%s]" % (
             url,
             "TEST_FAILED"))
 
