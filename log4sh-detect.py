@@ -43,6 +43,7 @@ except:
   except:
     pass
 import  getopt
+import  logging
 import  os
 import  random
 import  requests
@@ -63,8 +64,8 @@ _                       = [
 ]
 #------------------------------------------------------------------------------
 PROGRAM                 = os.path.basename(sys.argv[0])
-VERSION                 = "1.5"
-REVISION                = "20211218-1"
+VERSION                 = "1.6"
+REVISION                = "20211220-1"
 AUTHOR                  = "Morty (Morty's Creations)"
 #------------------------------------------------------------------------------
 # GLOBALS / CONSTANTS
@@ -108,6 +109,7 @@ LDAP_BIND_SUCCESS       = (
 #------------------------------------------------------------------------------
 #------------------------------------------------------------------------------
 g_debug                 = False
+g_requestLogger         = None
 g_resultOnly            = False
 g_evtAppExit            = Event()
 #------------------------------------------------------------------------------
@@ -516,6 +518,7 @@ OPTIONS:
   -h | --help                       this message
   url                               url to test for exploit
   -d | --debug                      enable debugging output
+  -v | --debug-verbose              enable verbose debug output (requests lib)
   -e | --exploit-only               send exploit request ONLY (NO RESULT)
   -r | --result-only                results only (no status)
   -i | --ip-callback    <ip>        ip for exploit callback
@@ -624,6 +627,45 @@ def signalHandler(signum, frame):
 
   if(g_evtAppExit is not None):
     g_evtAppExit.set()
+
+#------------------------------------------------------------------------------
+
+def setLogging(logEnabled = None, logRequestsLib = None):
+
+  global g_debug
+  global g_requestLogger
+  
+  ret     = False
+  
+  if(logEnabled is not None):
+    g_debug = logEnabled
+  
+  logging.getLogger().setLevel(logging.DEBUG)
+
+  if(logRequestsLib is not None):
+    try:
+      rLog = logging.getLogger("urllib3")
+      if(rLog is not None):
+        if(logRequestsLib):
+          if(g_requestLogger is None):
+            g_requestLogger = logging.StreamHandler(sys.stderr)
+            rLog.addHandler(g_requestLogger)
+            rLog.setLevel(logging.DEBUG)
+            #rLog.propagate = False
+            ret = True
+          else:
+            ret = True
+        elif(g_requestLogger is not None):
+          rLog.removeHandler(g_requestLogger)
+          g_requestLogger = None
+          ret             = True
+        else:
+          ret = True
+    except:
+      raise
+      ret = False
+
+  return(ret)    
 
 #------------------------------------------------------------------------------
 
@@ -757,7 +799,6 @@ def main():
 
   ## Globals Modified in Function
   global g_tcpThread
-  global g_debug
   global g_resultOnly
   
   ## Status Variables  
@@ -787,12 +828,13 @@ def main():
       print("WARNING: Failed to trap Signal %d" % (sig), file = sys.stderr)
 
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "hdeH:i:p:rTxW", \
+    opts, args = getopt.getopt(sys.argv[1:], "hdveH:i:p:rTxW", \
             [
             "help",
             "debug",
-            "ip-callback",
-            "port-callback",
+            "debug-verbose",
+            "ip-callback=",
+            "port-callback=",
             "exploit-only",
             "header=",
             "result-only",
@@ -809,7 +851,9 @@ def main():
     if o in ("-h", "--help"):
       usage()
     elif(o in ("-d", "--debug")):
-      g_debug               = True
+      setLogging(g_debug)
+    elif(o in ("-v", "--debug-verbose")):
+      setLogging(g_debug, logRequestsLib = True)
     elif(o in ("-e", "--exploit-only")):
       exploitOnly           = True
     elif(o in ("-H", "--header")):
